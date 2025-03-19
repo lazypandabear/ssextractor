@@ -8,11 +8,18 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
 from dotenv import load_dotenv
+import shutil  # ✅ For file operations
 
 # ✅ Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 SMARTSHEET_API_KEY = os.getenv("SMARTSHEET_API_KEY")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+
+# ✅ Load AppSheet API Key from .env
+APPSHEET_API_KEY = os.getenv("APPSHEET_API_KEY")
+APPSHEET_APP_ID = os.getenv("APPSHEET_APP_ID")
+APPSHEET_TABLE_NAME = os.getenv("APPSHEET_TABLE_NAME")
+
 
 # ✅ Initialize Smartsheet Client
 smartsheet_client = smartsheet.Smartsheet(SMARTSHEET_API_KEY)
@@ -141,7 +148,8 @@ def extract_sheet_data(sheet_id, sheet_name):
     os.makedirs(base_dir, exist_ok=True)
 
     for row in sheet_data.rows:
-        row_data = {columns[i]: cell.value if cell.value else '' for i, cell in enumerate(row.cells)}
+        row_data = {"Row ID": row.id}  # ✅ Include Row ID in the dataset
+        row_data.update({columns[i]: cell.value if cell.value else '' for i, cell in enumerate(row.cells)})
         row_id = row.id
         row_folder = os.path.join(base_dir, str(row_id))
         os.makedirs(row_folder, exist_ok=True)  # ✅ Ensure row folder exists
@@ -169,6 +177,11 @@ def extract_sheet_data(sheet_id, sheet_name):
                 # ✅ Upload to Google Drive & Save Drive Link
                 drive_link = upload_attachments_to_drive(sheet_id, row_id, file_path, file_name)
                 attachment_links.append(drive_link)
+
+                                # ✅ Delete the file after successful upload
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"🗑️ Deleted file: {file_path}")
         
         row_data["Attachments"] = ", ".join(attachment_links)  # ✅ Store attachment links
         rows.append(row_data)
@@ -197,6 +210,54 @@ def upload_to_google_sheets(df, google_sheet_id, sheet_name):
 
     print(f"✅ Uploaded {sheet_name} (as {sanitized_name}) to Google Sheets")
 
+
+
+def send_data_to_appsheet_database(df):
+    """ Sends extracted Smartsheet data to AppSheet Database via API. """
+    
+    url = f"https://api.appsheet.com/api/v2/apps/{APPSHEET_APP_ID}/tables/{APPSHEET_TABLE_NAME}/Action"
+    print(url)
+    headers = {
+        "Content-Type": "application/json",
+        "ApplicationAccessKey": APPSHEET_API_KEY
+    }
+
+    # ✅ Convert DataFrame to JSON format
+    records = []
+    for _, row in df.iterrows():
+        records.append({
+            "RowID": row["Row ID"],
+            "TaskName": row.get("Task Name", ""),  # Adjust based on Smartsheet structure
+            "Description": row.get("Description", ""),
+            "Attachments": row["Attachments"]  # Attachments are already comma-separated URLs
+        })
+    print(records)
+    payload = {
+        "Action": "Add",
+        "Properties": {"Locale": "en-US"},
+        "Rows": records
+    }
+
+    # ✅ Send Data to AppSheet
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 200:
+        print(f"✅ Successfully synced data with AppSheet Database.")
+    else:
+        print(f"❌ Failed to sync with AppSheet: {response.text}")
+
+
+def cleanup_downloads(base_dir):
+    """Deletes all extracted files from the local PC after successful upload."""
+    try:
+        if os.path.exists(base_dir):
+            shutil.rmtree(base_dir)  # Remove the entire folder and its contents
+            print(f"🗑️ Successfully deleted extracted files from {base_dir}")
+        else:
+            print(f"⚠️ Cleanup skipped: {base_dir} does not exist.")
+    except Exception as e:
+        print(f"❌ Error while deleting files: {e}")
+####################################################################################################
+
 # ✅ Get All Sheets from Smartsheet
 response = smartsheet_client.Sheets.list_sheets(include_all=True)
 sheets = response.data
@@ -218,5 +279,11 @@ for sheet in sheets:
 
     # ✅ Upload to Google Sheets
     upload_to_google_sheets(df, google_sheet_id, sheet_name)
+
+    # ✅ Send Data to AppSheet Database
+    send_data_to_appsheet_database(df)
+
+    base_dir = "./downloads/"
+    cleanup_downloads(base_dir)
 
 print("🎉 Migration Completed Successfully!")

@@ -8,3 +8,6 @@ test.py
 *.xlsx
 *.xls
 *.json
+downloads/
+tempCodeRunnerFile.py
+downloadingSheetAttachment.py
