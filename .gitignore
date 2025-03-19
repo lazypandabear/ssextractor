@@ -1,0 +1,10 @@
+smartsheet_py313/
+.env
+__pycache__/
+*.pyc
+*.pyo
+test.py
+*.csv
+*.xlsx
+*.xls
+*.json
