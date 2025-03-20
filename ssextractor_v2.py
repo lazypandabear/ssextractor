@@ -320,7 +320,51 @@ def get_or_create_drive_folder(folder_name, parent_folder_id):
     except Exception as e:
         print(f"❌ Error creating Google Drive folder {folder_name}: {e}")
         return None
+
+
+def download_smartsheet_attachments(sheet_id):
+    """Downloads all attachments from a Smartsheet and saves them in /attachments/{sheet_id}/{row_id}/"""
+    try:
+        # ✅ Create base folder for the sheet's attachments
+        base_folder = os.path.abspath(f"attachments/{sheet_id}")
+        os.makedirs(base_folder, exist_ok=True)
+
+        # ✅ Get all rows in the sheet
+        sheet_data = smartsheet_client.Sheets.get_sheet(sheet_id)
+
+        for row in sheet_data.rows:
+            row_id = row.id  # Unique Row ID in Smartsheet
+            row_folder = os.path.join(base_folder, str(row_id))
+            os.makedirs(row_folder, exist_ok=True)  # Create folder for row
+
+            # ✅ Get all attachments for this row
+            attachments = smartsheet_client.Attachments.list_row_attachments(sheet_id, row_id).data
+
+            for attachment in attachments:
+                att_id = attachment.id
+                file_name = attachment.name
+                file_path = os.path.join(row_folder, file_name)
+
+                # ✅ Fetch attachment details
+                retrieve_att = smartsheet_client.Attachments.get_attachment(sheet_id, att_id)
+                file_url = retrieve_att.url  # Check if it's downloadable
+
+                if file_url:
+                    # ✅ Download and save attachment
+                    response = requests.get(file_url, headers={"Authorization": f"Bearer {SMARTSHEET_API_KEY}"}, stream=True)
+                    with open(file_path, "wb") as file:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            file.write(chunk)
+
+                    print(f"✅ Downloaded: {file_path}")
+                else:
+                    print(f"⚠️ Skipped (No download link): {file_name}")
+
+        print(f"🎉 Completed downloading all attachments for sheet {sheet_id}")
     
+    except Exception as e:
+        print(f"❌ Error downloading attachments for sheet {sheet_id}: {e}")
+
 
 def upload_to_google_drive(sheet_id):
     """Uploads an Excel file to Google Drive in sheets/{sheet_id} folder."""

@@ -8,7 +8,7 @@ test.py
 *.xlsx
 *.xls
 *.json
-downloads/
+attachments/
 tempCodeRunnerFile.py
 downloadingSheetAttachment.py
 comment_extractor.py
