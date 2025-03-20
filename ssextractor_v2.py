@@ -320,6 +320,43 @@ def get_or_create_drive_folder(folder_name, parent_folder_id):
     except Exception as e:
         print(f"❌ Error creating Google Drive folder {folder_name}: {e}")
         return None
+    
+
+def upload_to_google_drive(sheet_id):
+    """Uploads an Excel file to Google Drive in sheets/{sheet_id} folder."""
+    try:
+        # ✅ Find the downloaded Excel file using wildcard
+        sheet_folder = os.path.abspath(f"sheets/{sheet_id}")
+        excel_files = glob.glob(os.path.join(sheet_folder, "*.xlsx"))
+        if not excel_files:
+            print(f"❌ Smartsheet Excel not found in {sheet_folder}")
+            return None
+
+        file_path = excel_files[0]  # ✅ Select first found file
+
+        # ✅ Ensure `sheets/{sheet_id}` folder exists in Google Drive
+        drive_sheet_folder_id = get_or_create_drive_folder(str(sheet_id), GOOGLE_DRIVE_SHEETS_FOLDER_ID)
+
+        if not drive_sheet_folder_id:
+            print(f"❌ Failed to create/find folder in Google Drive for Sheet {sheet_id}")
+            return None
+
+        # ✅ Upload the file to `sheets/{sheet_id}` folder in Drive
+        file_metadata = {
+            "name": os.path.basename(file_path),
+            "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "parents": [drive_sheet_folder_id],
+        }
+        media = MediaFileUpload(file_path, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+
+        print(f"✅ Uploaded {file_path} to Google Drive folder: sheets/{sheet_id}")
+        return file.get("id")
+
+    except Exception as e:
+        print(f"❌ Error uploading {file_path} to Google Drive: {e}")
+        return None
+
 
 
 def download_smartsheet_attachments(sheet_id):
@@ -366,39 +403,91 @@ def download_smartsheet_attachments(sheet_id):
         print(f"❌ Error downloading attachments for sheet {sheet_id}: {e}")
 
 
-def upload_to_google_drive(sheet_id):
-    """Uploads an Excel file to Google Drive in sheets/{sheet_id} folder."""
+
+
+
+def upload_comments_to_drive(sheet_id):
+    """Uploads the comments Excel file to Google Drive inside comments/{sheet_id}/."""
     try:
-        # ✅ Find the downloaded Excel file using wildcard
-        sheet_folder = os.path.abspath(f"sheets/{sheet_id}")
-        excel_files = glob.glob(os.path.join(sheet_folder, "*.xlsx"))
+        # ✅ Define the comments folder path
+        comments_folder = os.path.abspath(f"comments/{sheet_id}")
+        os.makedirs(comments_folder, exist_ok=True)  # Ensure directory exists
+
+        # ✅ Find the comments Excel file using wildcard (*.xlsx)
+        excel_files = glob.glob(os.path.join(comments_folder, "*.xlsx"))
         if not excel_files:
-            print(f"❌ Smartsheet Excel not found in {sheet_folder}")
+            print(f"❌ No comments file found in {comments_folder} for upload.")
             return None
 
-        file_path = excel_files[0]  # ✅ Select first found file
+        file_path = excel_files[0]  # Use the first (and only) found file
 
-        # ✅ Ensure `sheets/{sheet_id}` folder exists in Google Drive
-        drive_sheet_folder_id = get_or_create_drive_folder(str(sheet_id), GOOGLE_DRIVE_SHEETS_FOLDER_ID)
+        # ✅ Ensure Drive folder exists for comments
+        drive_folder_id = get_or_create_drive_folder(f"{sheet_id}", GOOGLE_DRIVE__COMMENTS_FOLDER_ID)
 
-        if not drive_sheet_folder_id:
-            print(f"❌ Failed to create/find folder in Google Drive for Sheet {sheet_id}")
-            return None
-
-        # ✅ Upload the file to `sheets/{sheet_id}` folder in Drive
+        # ✅ Upload the file to Google Drive
         file_metadata = {
             "name": os.path.basename(file_path),
             "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "parents": [drive_sheet_folder_id],
+            "parents": [drive_folder_id],
         }
         media = MediaFileUpload(file_path, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
 
-        print(f"✅ Uploaded {file_path} to Google Drive folder: sheets/{sheet_id}")
+        print(f"✅ Uploaded {file_path} to Google Drive in comments/{sheet_id}/")
         return file.get("id")
 
     except Exception as e:
-        print(f"❌ Error uploading {file_path} to Google Drive: {e}")
+        print(f"❌ Error uploading comments for sheet {sheet_id} to Google Drive: {e}")
+        return None
+
+
+def upload_attachments_to_drive(sheet_id):
+    """Uploads all attachments in attachments/{sheet_id}/{row_id}/ to Google Drive."""
+    try:
+        # ✅ Define the base attachments directory
+        attachments_folder = os.path.abspath(f"attachments/{sheet_id}")
+        if not os.path.exists(attachments_folder):
+            print(f"❌ No attachments found for sheet {sheet_id}.")
+            return None
+
+        # ✅ Ensure Drive folder exists for attachments/{sheet_id}
+        drive_sheet_folder_id = get_or_create_drive_folder(f"{sheet_id}", GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID)
+
+        uploaded_files = {}
+
+        # ✅ Loop through row_id folders
+        for row_folder in os.listdir(attachments_folder):
+            row_folder_path = os.path.join(attachments_folder, row_folder)
+            if not os.path.isdir(row_folder_path):
+                continue  # Skip non-folder files
+            
+            # ✅ Ensure Drive folder exists for attachments/{sheet_id}/{row_id}
+            drive_row_folder_id = get_or_create_drive_folder(row_folder, drive_sheet_folder_id)
+
+            # ✅ Find all files inside row_id folder
+            attachment_files = glob.glob(os.path.join(row_folder_path, "*.*"))
+            for file_path in attachment_files:
+                file_name = os.path.basename(file_path)
+
+                # ✅ Upload the file to Google Drive
+                file_metadata = {
+                    "name": file_name,
+                    "mimeType": "application/octet-stream",
+                    "parents": [drive_row_folder_id],
+                }
+                media = MediaFileUpload(file_path, mimetype="application/octet-stream")
+                file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+                drive_link = f"https://drive.google.com/file/d/{file.get('id')}/view"
+
+                # ✅ Store uploaded file info
+                uploaded_files[file_name] = drive_link
+
+                print(f"✅ Uploaded {file_name} to Google Drive in attachments/{sheet_id}/{row_folder}/")
+
+        return uploaded_files
+
+    except Exception as e:
+        print(f"❌ Error uploading attachments for sheet {sheet_id}: {e}")
         return None
 
 # ✅ Send Data to AppSheet
@@ -441,12 +530,17 @@ def send_data_to_appsheet_database(google_sheet_id, sheet_name):
     except Exception as e:
         print(f"❌ Error syncing with AppSheet: {e}")
 
+
+if __name__ == "__main__":
 # ✅ **Main Execution**
-sheet_id = 457130802210692  # Replace with actual Smartsheet ID
-excel_path,original_file = download_smartsheet_as_excel(sheet_id)
-if excel_path:
-    extract_and_store_comments(sheet_id,original_file)
-    create_relative_row_mapping(sheet_id)
-    merge_comments_with_row_mapping(sheet_id)
-    drive_file_id = upload_to_google_drive(sheet_id)
+    sheet_id = 457130802210692  # Replace with actual Smartsheet ID
+    excel_path,original_file = download_smartsheet_as_excel(sheet_id)
+    if excel_path:
+        extract_and_store_comments(sheet_id,original_file)
+        create_relative_row_mapping(sheet_id)
+        merge_comments_with_row_mapping(sheet_id)
+        download_smartsheet_attachments(sheet_id)
+        drive_file_id = upload_to_google_drive(sheet_id)
+        upload_comments_to_drive(sheet_id)
+        upload_attachments_to_drive(sheet_id)
 
