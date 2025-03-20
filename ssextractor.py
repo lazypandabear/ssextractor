@@ -202,7 +202,7 @@ def extract_sheet_data(sheet_id, sheet_name):
             if file_url:
                 # ✅ Download File
                 response = requests.get(file_url, headers={"Authorization": f"Bearer {SMARTSHEET_API_KEY}"}, stream=True)
-                with open(file_path, "wb") as file:
+                with open(file_path, "wb") as file: # ✅ Save file to local directory
                     for chunk in response.iter_content(chunk_size=8192):
                         file.write(chunk)
 
@@ -210,7 +210,7 @@ def extract_sheet_data(sheet_id, sheet_name):
                 drive_link = upload_attachments_to_drive(sheet_id, row_id, file_path, file_name)
                 attachment_links.append(drive_link)
 
-                                # ✅ Delete the file after successful upload
+                # ✅ Delete the file after successful upload
                 if os.path.exists(file_path):
                     os.remove(file_path)
                     print(f"🗑️ Deleted file: {file_path}")
