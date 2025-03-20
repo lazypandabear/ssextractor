@@ -9,6 +9,7 @@ from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
 from dotenv import load_dotenv
 import shutil  # ✅ For file operations
+import urllib.parse
 
 # ✅ Load environment variables
 load_dotenv(override=True)
@@ -104,6 +105,33 @@ def ensure_sheet_folder(sheet_id):
         sheet_folders[sheet_id] = get_or_create_drive_folder(str(sheet_id), GOOGLE_DRIVE_FOLDER_ID)
     return sheet_folders[sheet_id]
 
+
+
+# ✅ Function to Get Smartsheet Comments for a Row
+def get_smartsheet_comments(sheet_id):
+    """Fetches all comments for a sheet and maps them to row IDs."""
+    try:
+        discussions = smartsheet_client.Sheets.list_discussions(sheet_id).data  # ✅ Fetch discussions for the entire sheet
+        comments_data = []
+
+        for discussion in discussions:
+            row_id = discussion.parent_id  # ✅ Get the Row ID where the discussion is attached
+            
+            for comment in discussion.comments:
+                comments_data.append({
+                    "Row ID": row_id,
+                    "Comment Date": comment.created_at,
+                    "Comment": comment.text
+                })
+
+        return pd.DataFrame(comments_data)  # ✅ Return as DataFrame for Excel storage
+
+    except Exception as e:
+        print(f"❌ Error fetching comments for Sheet {sheet_id}: {e}")
+        return pd.DataFrame(columns=["Row ID", "Comment Date", "Comment"])  # ✅ Return empty DataFrame if error
+
+
+
 # ✅ Function to Upload Attachments to a Single Folder Per Sheet
 def upload_attachments_to_drive(sheet_id, row_id, file_path, file_name):
     """Uploads attachments to a single Drive folder per Smartsheet sheet ID, with optional row subfolders."""
@@ -142,7 +170,7 @@ def extract_sheet_data(sheet_id, sheet_name):
     """Extracts data from Smartsheet, downloads attachments, and uploads them to Google Drive."""
     sheet_data = smartsheet_client.Sheets.get_sheet(sheet_id)
     columns = [col.title for col in sheet_data.columns]
-
+    
     rows = []
     base_dir = f"./downloads/{sheet_id}/"  # ✅ Base directory for the sheet
     os.makedirs(base_dir, exist_ok=True)
@@ -153,6 +181,10 @@ def extract_sheet_data(sheet_id, sheet_name):
         row_id = row.id
         row_folder = os.path.join(base_dir, str(row_id))
         os.makedirs(row_folder, exist_ok=True)  # ✅ Ensure row folder exists
+
+        # ✅ Fetch and add comments for each row
+        #row_data["Comments"] = get_smartsheet_comments(sheet_id, row.id)
+        df_comments = get_smartsheet_comments(sheet_id)
 
         # ✅ Get Attachments for Row
         attachments = smartsheet_client.Attachments.list_row_attachments(sheet_id, row_id).data
@@ -186,10 +218,18 @@ def extract_sheet_data(sheet_id, sheet_name):
         row_data["Attachments"] = ", ".join(attachment_links)  # ✅ Store attachment links
         rows.append(row_data)
 
-    # ✅ Save Data to CSV
+    # ✅ Convert Smartsheet data to DataFrame
+    df_main = pd.DataFrame(rows)
+
+    # ✅ Save Data as XLSX
     df = pd.DataFrame(rows)
-    df.to_csv(f"{sheet_id}.csv", index=False)  # ✅ Use Smartsheet sheet_id as filename
-    return df
+    excel_filename = f"{sheet_id}.xlsx"
+    with pd.ExcelWriter(excel_filename, engine="xlsxwriter") as writer:
+        df_main.to_excel(writer, sheet_name="Smartsheet Data", index=False)  # ✅ Sheet 1: Smartsheet Data
+        df_comments.to_excel(writer, sheet_name="Comments", index=False)  # ✅ Sheet 2: Comments
+
+    print(f"✅ Saved Smartsheet data and comments to {excel_filename}")
+    return df, excel_filename
 
 # ✅ Function to Upload Data to Google Sheets
 def upload_to_google_sheets(df, google_sheet_id, sheet_name):
@@ -210,40 +250,105 @@ def upload_to_google_sheets(df, google_sheet_id, sheet_name):
 
     print(f"✅ Uploaded {sheet_name} (as {sanitized_name}) to Google Sheets")
 
+# ✅ Function to Upload Excel to Google Drive
+def upload_excel_to_drive(excel_filename, sheet_id):
+    """Uploads the Excel file to Google Drive."""
+    file_metadata = {
+        "name": excel_filename,
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "parents": [GOOGLE_DRIVE_FOLDER_ID]
+    }
 
+    media = MediaFileUpload(excel_filename, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
 
-def send_data_to_appsheet_database(df):
-    """ Sends extracted Smartsheet data to AppSheet Database via API. """
+    print(f"✅ Uploaded {excel_filename} to Google Drive with ID: {file.get('id')}")
+    return file.get("id")
+
+def get_google_sheet_columns(google_sheet_id, sheet_name):
+    """ Retrieves column names from a Google Sheet to ensure proper mapping in AppSheet. """
     
-    url = f"https://api.appsheet.com/api/v2/apps/{APPSHEET_APP_ID}/tables/{APPSHEET_TABLE_NAME}/Action"
-    print(url)
-    headers = {
+    sanitized_name = clean_sheet_name(sheet_name)  # Ensure correct sheet tab name
+    range_name = f"'{sanitized_name}'!A1:Z1"  # Fetch only header row
+    
+    try:
+        result = sheet_service.spreadsheets().values().get(
+            spreadsheetId=google_sheet_id,
+            range=range_name
+        ).execute()
+        
+        values = result.get("values", [])
+        
+        if values:
+            return values[0]  # First row contains column names
+        else:
+            print(f"⚠️ No headers found in Google Sheet for {sheet_name}.")
+            return []
+
+    except Exception as e:
+        print(f"❌ Error fetching Google Sheet columns: {e}")
+        return []
+
+
+def send_data_to_appsheet_database(google_sheet_id, sheet_name):
+    """Fetches data from Google Sheets and sends it to AppSheet Database via API after ensuring column alignment."""
+
+    # ✅ Ensure the sheet name is sanitized
+    sanitized_sheet_name = ensure_google_sheet_tab_exists(google_sheet_id, sheet_name)
+
+    # ✅ Encode sheet name for URL safety
+    encoded_sheet_name = urllib.parse.quote(sanitized_sheet_name)
+
+    # ✅ Fetch Data from Google Sheets
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{google_sheet_id}/values/{encoded_sheet_name}!A1:Z1000"
+    headers = {"Authorization": f"Bearer {credentials.token}"}
+    
+    response = requests.get(url, headers=headers)
+
+    if response.status_code != 200:
+        print(f"❌ Failed to fetch Google Sheet data: {response.text}")
+        return
+
+    sheet_data = response.json().get("values", [])
+    if not sheet_data:
+        print("⚠️ No data found in Google Sheet.")
+        return
+
+    # ✅ Extract Headers and Data
+    headers = sheet_data[0]  # First row is headers
+    rows_data = sheet_data[1:]  # Remaining rows are data
+
+    # ✅ Format Data for AppSheet
+    records = []
+    for row in rows_data:
+        record = {}
+        for index, col_name in enumerate(headers):
+            record[col_name] = row[index] if index < len(row) else ""
+
+        records.append(record)
+
+    # ✅ Send Data to AppSheet
+    appsheet_url = f"https://api.appsheet.com/api/v2/apps/{APPSHEET_APP_ID}/tables/{APPSHEET_TABLE_NAME}/Action"
+    appsheet_headers = {
         "Content-Type": "application/json",
         "ApplicationAccessKey": APPSHEET_API_KEY
     }
 
-    # ✅ Convert DataFrame to JSON format
-    records = []
-    for _, row in df.iterrows():
-        records.append({
-            "RowID": row["Row ID"],
-            "TaskName": row.get("Task Name", ""),  # Adjust based on Smartsheet structure
-            "Description": row.get("Description", ""),
-            "Attachments": row["Attachments"]  # Attachments are already comma-separated URLs
-        })
-    print(records)
     payload = {
-        "Action": "Add",
-        "Properties": {"Locale": "en-US"},
+        "Action": "AddOrUpdate",
+        "Properties": { "Locale": "en-US" },
         "Rows": records
     }
 
-    # ✅ Send Data to AppSheet
-    response = requests.post(url, headers=headers, json=payload)
+    print("📤 Sending Data to AppSheet:", json.dumps(payload, indent=2))
+
+    response = requests.post(appsheet_url, headers=appsheet_headers, json=payload)
+
     if response.status_code == 200:
         print(f"✅ Successfully synced data with AppSheet Database.")
     else:
         print(f"❌ Failed to sync with AppSheet: {response.text}")
+
 
 
 def cleanup_downloads(base_dir):
@@ -275,13 +380,14 @@ for sheet in sheets:
     sheet_id_map[sheet_id] = google_sheet_id  # ✅ Store mapping
 
     # ✅ Extract Data from Smartsheet
-    df = extract_sheet_data(sheet_id, sheet_name)
+    df, excel_filename = extract_sheet_data(sheet_id, sheet_name)
 
     # ✅ Upload to Google Sheets
-    upload_to_google_sheets(df, google_sheet_id, sheet_name)
+    #upload_to_google_sheets(df, google_sheet_id, sheet_name)
+    google_drive_file_id = upload_excel_to_drive(excel_filename, sheet_id)
 
     # ✅ Send Data to AppSheet Database
-    send_data_to_appsheet_database(df)
+    send_data_to_appsheet_database(google_sheet_id, sheet_name)
 
     base_dir = "./downloads/"
     cleanup_downloads(base_dir)
