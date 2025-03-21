@@ -93,7 +93,7 @@ This is how you get your tools ready:
 ## Running the Code (Finally!)
 
 1.  **Choose the Main Code:** You'll mostly be working with `main.py`.
-2.  **sheet Id:** if you are working with only 1 sheet change `sheet_id = 457130802210692` with your sheet id in `test.py` or in `ssextractor.py`.
+2.  **sheet Id:** if you are working with only 1 sheet change `sheet_id = 457130802210692` with your sheet id in `ssextractor.py`.
 3.  **Folder ID:** if you are working with more then 1 sheet you can add the folder ID in the `getSsSheetID.py` file in the `folder_id = 5778260903651204` line.
 4.  **Open Terminal:** Open a terminal or command prompt in the folder where your code is.
 5.  **Run:** Type the following command and press Enter:
@@ -118,10 +118,6 @@ This is how you get your tools ready:
     *   It downloads attachments.
     *   It uploads to Google Drive.
     *   it has the function to send data to appsheet.
-*   **`test.py`**
-    *   This file is similar to `ssextractor.py` but is for testing.
-    *   It calls functions from `ssextractor.py`.
-    *   the main difference is that it download the excel and adds the row ID
 *   **`getSsSheetID.py`:**
     *   This file connects to Smartsheet and gets the IDs of all the sheets in a folder.
     *   it saves the id's in a list and in a .csv file if you want.
