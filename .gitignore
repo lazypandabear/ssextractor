@@ -13,3 +13,5 @@ tempCodeRunnerFile.py
 downloadingSheetAttachment.py
 comment_extractor.py
 getSmartsheetAsExcel.py
+sheet.py
+backup_ssextractor.py
