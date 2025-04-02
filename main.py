@@ -1,71 +1,64 @@
-import smartsheet
 import os
-import pandas as pd
-import requests
-import json
-import re  # ✅ For sanitizing sheet names
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-from google.oauth2 import service_account
-from dotenv import load_dotenv
-import shutil  # ✅ For file operations
-import urllib.parse
-from ssextractor import *
+import smartsheet
+from ssextractor import (
+    download_smartsheet_as_excel,
+    extract_and_store_comments,
+    create_relative_row_mapping,
+    merge_comments_with_row_mapping,
+    download_smartsheet_attachments,
+    prepare_sheet_for_drive_upload,
+    upload_to_google_drive,
+    upload_comments_to_drive,
+    upload_attachments_to_drive
+)
 from getSsSheetID import get_sheets_in_folder
 
-# ✅ Load environment variables
-load_dotenv(override=True)
-SMARTSHEET_API_KEY = os.getenv("SMARTSHEET_API_KEY")
-GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+def run_migration(config):
+    """
+    Updates configuration from the provided dictionary and runs the migration.
+    Expected keys in config:
+        - smartsheet_api_key
+        - smartsheet_folder_id
+        - google_drive_sheets_folder_id
+        - google_drive_comments_folder_id
+        - google_drive_attachments_folder_id
+    """
+    # Update environment variables (or pass the config to your functions if preferred)
+    os.environ["SMARTSHEET_API_KEY"] = config.get("smartsheet_api_key")
+    os.environ["GOOGLE_DRIVE_SHEETS_FOLDER_ID"] = config.get("google_drive_sheets_folder_id")
+    os.environ["GOOGLE_DRIVE__COMMENTS_FOLDER_ID"] = config.get("google_drive_comments_folder_id")
+    os.environ["GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID"] = config.get("google_drive_attachments_folder_id")
+    
+    # Depending on your original code, you might also set or use the Smartsheet folder ID:
+    smartsheet_folder_id = config.get("smartsheet_folder_id")
+    
+    # Get sheets in the specified Smartsheet folder
+    sheets, sheet_info, sheet_ids_list = get_sheets_in_folder(smartsheet_folder_id)
+    print(f"🔄 Found {len(sheets)} sheets in folder ID {smartsheet_folder_id}.")
+    for sheet in sheets:
+        sheet_id = sheet.id
+        # Execute the various migration functions
+        download_smartsheet_as_excel(sheet_id)
+        extract_and_store_comments(sheet_id)
+        create_relative_row_mapping(sheet_id)
+        merge_comments_with_row_mapping(sheet_id)
+        download_smartsheet_attachments(sheet_id)
+        prepare_sheet_for_drive_upload(sheet_id)
+        upload_to_google_drive(sheet_id)
+        upload_comments_to_drive(sheet_id)
+        upload_attachments_to_drive(sheet_id)
+    
+    print("🎉 Migration Completed Successfully!")
+    return "Migration Completed Successfully!"
 
-# ✅ Load AppSheet API Key from .env
-APPSHEET_API_KEY = os.getenv("APPSHEET_API_KEY")
-APPSHEET_APP_ID = os.getenv("APPSHEET_APP_ID")
-APPSHEET_TABLE_NAME = os.getenv("APPSHEET_TABLE_NAME")
-
-
-
-# ✅ Initialize Smartsheet Client
-smartsheet_client = smartsheet.Smartsheet(SMARTSHEET_API_KEY)
-
-
-def cleanup_downloads(base_dir):
-    """Deletes all extracted files from the local PC after successful upload."""
-    try:
-        if os.path.exists(base_dir):
-            shutil.rmtree(base_dir)  # Remove the entire folder and its contents
-            print(f"🗑️ Successfully deleted extracted files from {base_dir}")
-        else:
-            print(f"⚠️ Cleanup skipped: {base_dir} does not exist.")
-    except Exception as e:
-        print(f"❌ Error while deleting files: {e}")
-
-# ✅ Get All Sheets from Smartsheet
-#response = smartsheet_client.Sheets.list_sheets(include_all=True)
-#sheets = response.data
-
-# ✅ Get All Sheets from a Smartsheet Folder
-folder_id = 5778260903651204
-sheets,sheet_info,sheet_ids_list =get_sheets_in_folder(folder_id)
-
-
-for sheet in sheets:
-    sheet_id = sheet.id # Replace with actual Smartsheet ID
-    sheet_name = sheet.name
-    print(f"🔄 Processing: {sheet_name} (ID: {sheet_id})")
-# ✅ **Main Execution**
-    download_smartsheet_as_excel(sheet_id)
-    extract_and_store_comments(sheet_id)
-    create_relative_row_mapping(sheet_id)
-    merge_comments_with_row_mapping(sheet_id)
-    download_smartsheet_attachments(sheet_id)
-    prepare_sheet_for_drive_upload(sheet_id)
-    upload_to_google_drive(sheet_id)
-    upload_comments_to_drive(sheet_id)
-    upload_attachments_to_drive(sheet_id)
-
-cleanup_downloads("C:/users/Dennis/smartsheetAPI/attachments")  
-cleanup_downloads("C:/users/Dennis/smartsheetAPI/comments")  
-cleanup_downloads("C:/users/Dennis/smartsheetAPI/row_mapping")  
-cleanup_downloads("C:/users/Dennis/smartsheetAPI/sheets")  
-print("🎉 Migration Completed Successfully!")
+# If you want to allow running the script directly as well:
+if __name__ == '__main__':
+    # You might define default values or load from environment here.
+    config = {
+        "smartsheet_api_key": os.getenv("SMARTSHEET_API_KEY"),
+        "smartsheet_folder_id": "YOUR_DEFAULT_FOLDER_ID",
+        "google_drive_sheets_folder_id": os.getenv("GOOGLE_DRIVE_SHEETS_FOLDER_ID"),
+        "google_drive_comments_folder_id": os.getenv("GOOGLE_DRIVE__COMMENTS_FOLDER_ID"),
+        "google_drive_attachments_folder_id": os.getenv("GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID")
+    }
+    run_migration(config)
