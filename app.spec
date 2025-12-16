@@ -7,7 +7,6 @@ a = Analysis(
     binaries=[],
     datas=[
         ('templates', 'templates'),
-        ('.env', '.')
         # ('service_account.json', '.')  # Uncomment if you bundle it
     ],
     hiddenimports=[],

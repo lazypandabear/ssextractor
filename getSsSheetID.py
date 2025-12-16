@@ -1,33 +1,27 @@
-import smartsheet
+import smartsheet # Import Smartsheet SDK
 import os
 import pandas as pd
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 
 # ✅ Load environment variables
-load_dotenv(override=True)
-SMARTSHEET_API_KEY = os.getenv("SMARTSHEET_API_KEY")
+#load_dotenv(override=True)
+#SMARTSHEET_API_KEY = os.getenv("SMARTSHEET_API_KEY")
 
 # ✅ Initialize Smartsheet Client
-smartsheet_client = smartsheet.Smartsheet(SMARTSHEET_API_KEY)
+#smartsheet_client = smartsheet.Smartsheet(SMARTSHEET_API_KEY)
 
-def get_sheets_in_folder(folder_id):
+def get_sheets_in_folder(client, folder_id):
     """Retrieves all sheets inside a given Smartsheet folder and returns them as a list of dictionaries."""
     try:
         # ✅ Get the folder details
-        folder = smartsheet_client.Folders.get_folder(folder_id)
-        sheets = folder.sheets
-
-        if not sheets:
-            print(f"⚠️ No sheets found in Folder ID {folder_id}.")
-            return []
-
-        sheet_info = [{"Sheet ID": sheet.id, "Sheet Name": sheet.name} for sheet in sheets]
-        sheet_ids_list = [sheet.id for sheet in sheets]
-
-        print(f"✅ Found {len(sheets)} sheets in Folder ID {folder_id}:")
+        folder = client.Folders.get_folder(folder_id)
+        if hasattr(folder, 'sheets'):
+            sheets = folder.sheets
+            sheet_info = [{"Sheet ID": sheet.id, "Sheet Name": sheet.name} for sheet in sheets]
+            sheet_ids_list = [sheet.id for sheet in sheets]
+            print(f"✅ Found {len(sheets)} sheets in Folder ID {folder_id}.")
         for sheet in sheet_info:
             print(f"  - {sheet['Sheet Name']} (ID: {sheet['Sheet ID']})")
-
         return sheets,sheet_info,sheet_ids_list
 
     except smartsheet.exceptions.ApiError as e:

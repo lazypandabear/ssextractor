@@ -1,5 +1,7 @@
 import os
+import time
 import smartsheet
+import process_state
 from ssextractor import (
     download_smartsheet_as_excel,
     extract_and_store_comments,
@@ -9,56 +11,113 @@ from ssextractor import (
     prepare_sheet_for_drive_upload,
     upload_to_google_drive,
     upload_comments_to_drive,
-    upload_attachments_to_drive
+    upload_attachments_to_drive,
+    access_config_file,
+    get_smartsheet_client
 )
 from getSsSheetID import get_sheets_in_folder
+import config
 
-def run_migration(config):
+
+
+
+def run_migration():
     """
-    Updates configuration from the provided dictionary and runs the migration.
-    Expected keys in config:
-        - smartsheet_api_key
-        - smartsheet_folder_id
-        - google_drive_sheets_folder_id
-        - google_drive_comments_folder_id
-        - google_drive_attachments_folder_id
+    Runs the migration process using configuration from the form.
     """
-    # Update environment variables (or pass the config to your functions if preferred)
-    os.environ["SMARTSHEET_API_KEY"] = config.get("smartsheet_api_key")
-    os.environ["GOOGLE_DRIVE_SHEETS_FOLDER_ID"] = config.get("google_drive_sheets_folder_id")
-    os.environ["GOOGLE_DRIVE__COMMENTS_FOLDER_ID"] = config.get("google_drive_comments_folder_id")
-    os.environ["GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID"] = config.get("google_drive_attachments_folder_id")
+    # Set initial process state
+    process_state.migration_status['running'] = True
+    process_state.migration_status['progress'] = 'Starting migration'
+    process_state.migration_status['details'] = ''
     
-    # Depending on your original code, you might also set or use the Smartsheet folder ID:
-    smartsheet_folder_id = config.get("smartsheet_folder_id")
     
+    # Update environment variables for other credentials if needed.
+    # ...
+    # Create the Smartsheet client using the API key provided from the form.
+    # Use the credentials from the global config
+    
+
+    #smartsheet_api_key = config.get("SMARTSHEET_FOLDER_ID")
+    client = get_smartsheet_client()
+    
+    #client = smartsheet.Smartsheet()
+    smartsheet_folder_id = access_config_file("SMARTSHEET_FOLDER_ID")
     # Get sheets in the specified Smartsheet folder
-    sheets, sheet_info, sheet_ids_list = get_sheets_in_folder(smartsheet_folder_id)
-    print(f"🔄 Found {len(sheets)} sheets in folder ID {smartsheet_folder_id}.")
-    for sheet in sheets:
-        sheet_id = sheet.id
-        # Execute the various migration functions
-        download_smartsheet_as_excel(sheet_id)
-        extract_and_store_comments(sheet_id)
-        create_relative_row_mapping(sheet_id)
-        merge_comments_with_row_mapping(sheet_id)
-        download_smartsheet_attachments(sheet_id)
-        prepare_sheet_for_drive_upload(sheet_id)
-        upload_to_google_drive(sheet_id)
-        upload_comments_to_drive(sheet_id)
-        upload_attachments_to_drive(sheet_id)
+    sheets_data = get_sheets_in_folder(client, smartsheet_folder_id)
+    if not sheets_data:
+        process_state.migration_status['progress'] = 'Error retrieving sheets'
+        process_state.migration_status['running'] = False
+        return "Error: Could not retrieve sheets from folder. Please verify your API key and folder ID."
     
+    sheets, sheet_info, sheet_ids_list = sheets_data
+    process_state.migration_status['progress'] = f"Found {len(sheets)} sheets in folder ID {smartsheet_folder_id}."
+
+    # Process each sheet
+    for sheet in sheets:
+        if process_state.cancel_requested:
+            process_state.migration_status['progress'] = 'Migration Cancelled'
+            process_state.migration_status['running'] = False
+            return "Migration Cancelled by User"
+            
+        sheet_id = sheet.id
+        process_state.migration_status['progress'] = f"Processing sheet {sheet_id}..."
+        
+        download_smartsheet_as_excel(sheet_id)
+        if process_state.cancel_requested: break
+        
+        extract_and_store_comments(sheet_id)
+        if process_state.cancel_requested: break
+        
+        create_relative_row_mapping(sheet_id)
+        if process_state.cancel_requested: break
+        
+        merge_comments_with_row_mapping(sheet_id)
+        if process_state.cancel_requested: break
+        
+        download_smartsheet_attachments(sheet_id)
+        if process_state.cancel_requested: break
+        
+        prepare_sheet_for_drive_upload(sheet_id)
+        if process_state.cancel_requested: break
+        
+        upload_to_google_drive(sheet_id)
+        if process_state.cancel_requested: break
+        
+        upload_comments_to_drive(sheet_id)
+        if process_state.cancel_requested: break
+        
+        upload_attachments_to_drive(sheet_id)
+        if process_state.cancel_requested: break
+        
+        # Optional: simulate delay between processing sheets
+        time.sleep(1)
+    
+    if process_state.cancel_requested:
+        process_state.migration_status['progress'] = 'Migration Cancelled'
+        process_state.migration_status['running'] = False
+        return "Migration Cancelled by User"
+    
+    process_state.migration_status['progress'] = "Migration Completed"
+    process_state.migration_status['running'] = False
     print("🎉 Migration Completed Successfully!")
     return "Migration Completed Successfully!"
 
-# If you want to allow running the script directly as well:
+
+# Flask app to handle user input and display migration status
 if __name__ == '__main__':
-    # You might define default values or load from environment here.
-    config = {
-        "smartsheet_api_key": os.getenv("SMARTSHEET_API_KEY"),
-        "smartsheet_folder_id": "YOUR_DEFAULT_FOLDER_ID",
-        "google_drive_sheets_folder_id": os.getenv("GOOGLE_DRIVE_SHEETS_FOLDER_ID"),
-        "google_drive_comments_folder_id": os.getenv("GOOGLE_DRIVE__COMMENTS_FOLDER_ID"),
-        "google_drive_attachments_folder_id": os.getenv("GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID")
-    }
-    run_migration(config)
+    #SMARTSHEET_API_KEY = config.CREDENTIALS["SMARTSHEET_API_KEY"]
+    #SMARTSHEET_FOLDER_ID = config.CREDENTIALS["SMARTSHEET_FOLDER_ID"]
+    #GOOGLE_DRIVE_SHEETS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE_SHEETS_FOLDER_ID"]
+    #GOOGLE_DRIVE__COMMENTS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE__COMMENTS_FOLDER_ID"]
+    #GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID"]
+    #APPSHEET_API_KEY = config.CREDENTIALS["APPSHEET_API_KEY"]
+    #APPSHEET_APP_ID = config.CREDENTIALS["APPSHEET_APP_ID"]
+    #APPSHEET_TABLE_NAME = config.CREDENTIALS["APPSHEET_TABLE_NAME"]
+    #configuration = {
+    #    "smartsheet_api_key": SMARTSHEET_API_KEY,
+    #    "smartsheet_folder_id": SMARTSHEET_FOLDER_ID,
+    #    "google_drive_sheets_folder_id": GOOGLE_DRIVE_SHEETS_FOLDER_ID,
+    #    "google_drive_comments_folder_id": GOOGLE_DRIVE__COMMENTS_FOLDER_ID,
+    #    "google_drive_attachments_folder_id": GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID
+    #}
+    print("run_migration(configuration)")

@@ -7,19 +7,21 @@ import smartsheet
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 import time  # ✅ For sleep
+from process_state import cancel_requested  # or import process_state and reference process_state.cancel_requested
+import config
 
-
-# ✅ Load environment variables
-load_dotenv(override=True)
-SMARTSHEET_API_KEY = os.getenv("SMARTSHEET_API_KEY")
-GOOGLE_DRIVE_SHEETS_FOLDER_ID = os.getenv("GOOGLE_DRIVE_SHEETS_FOLDER_ID")
-GOOGLE_DRIVE__COMMENTS_FOLDER_ID = os.getenv("GOOGLE_DRIVE__COMMENTS_FOLDER_ID")
-GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID = os.getenv("GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID")
-APPSHEET_API_KEY = os.getenv("APPSHEET_API_KEY")
-APPSHEET_APP_ID = os.getenv("APPSHEET_APP_ID")
-APPSHEET_TABLE_NAME = os.getenv("APPSHEET_TABLE_NAME")
+# If you still need .env for other non-SMARTSHEET values, you can load it.
+#load_dotenv(override=True)
+# Use the credentials from the global config
+#SMARTSHEET_API_KEY = config.CREDENTIALS["SMARTSHEET_API_KEY"]
+#GOOGLE_DRIVE_SHEETS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE_SHEETS_FOLDER_ID"]
+#GOOGLE_DRIVE__COMMENTS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE__COMMENTS_FOLDER_ID"]
+#GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID"]
+#APPSHEET_API_KEY = config.CREDENTIALS["APPSHEET_API_KEY"]
+#APPSHEET_APP_ID = config.CREDENTIALS["APPSHEET_APP_ID"]
+#APPSHEET_TABLE_NAME = config.CREDENTIALS["APPSHEET_TABLE_NAME"]
 
 #✅ Google API Credentials
 SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
@@ -27,7 +29,23 @@ SERVICE_ACCOUNT_FILE = "service_account.json"
 credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 drive_service = build("drive", "v3", credentials=credentials)
 sheet_service = build("sheets", "v4", credentials=credentials)
-smartsheet_client = smartsheet.Smartsheet(SMARTSHEET_API_KEY)
+
+def get_smartsheet_client():
+    import config
+    api_key = config.CREDENTIALS["SMARTSHEET_API_KEY"]
+    #print("DEBUG: API Key is:", api_key)  # This should print the key entered by the user
+    if not api_key:
+        raise ValueError("No API key provided. Please update config.CREDENTIALS.")
+    return smartsheet.Smartsheet(api_key)
+
+def access_config_file(key):
+    import config
+    config_value = config.CREDENTIALS[key]
+    return config_value
+    
+
+# ✅ Initialize Smartsheet Client
+#smartsheet_client = get_smartsheet_client()
 
 # ✅ Ensure folder exists
 def ensure_folder(folder_path):
@@ -51,6 +69,7 @@ def sanitize_filename(filename, max_length=100):
 
 def download_smartsheet_as_excel(sheet_id):
     """Downloads a Smartsheet as an Excel file and adds the Row ID column efficiently."""
+    smartsheet_client = get_smartsheet_client()
     try:
         # ✅ Define folders and paths
         sheet_folder = os.path.abspath(f"sheets/{sheet_id}")
@@ -82,6 +101,7 @@ def wait_for_excel_file(sheet_folder, retries=100, delay=2):
 def fetch_smartsheet_row_ids(sheet_id):
     """Fetches all row IDs from Smartsheet and returns a row number to row ID mapping."""
     try:
+        smartsheet_client = get_smartsheet_client()
         sheet_data = smartsheet_client.Sheets.get_sheet(sheet_id)
         row_mapping = {row.row_number: row.id for row in sheet_data.rows}  # ✅ Map row number → row ID
 
@@ -197,6 +217,7 @@ def create_relative_row_mapping(sheet_id):
 def prepare_sheet_for_drive_upload(sheet_id):
     """Adds Row ID and Filename columns to the downloaded Excel file for Google Drive upload."""
     try:
+        smartsheet_client = get_smartsheet_client()
         # ✅ Define folders and paths
         sheet_folder = os.path.abspath(f"sheets/{sheet_id}")
         ensure_folder(sheet_folder)
@@ -327,7 +348,7 @@ def upload_to_google_drive(sheet_id):
             return None
 
         file_path = excel_files[0]  # ✅ Select first found file
-
+        GOOGLE_DRIVE_SHEETS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE_SHEETS_FOLDER_ID"]
         # ✅ Ensure `sheets/{sheet_id}` folder exists in Google Drive
         drive_sheet_folder_id = get_or_create_drive_folder(str(sheet_id), GOOGLE_DRIVE_SHEETS_FOLDER_ID)
 
@@ -354,51 +375,68 @@ def upload_to_google_drive(sheet_id):
 
 
 def download_smartsheet_attachments(sheet_id):
+    smartsheet_client = get_smartsheet_client()
     """Downloads all attachments from a Smartsheet and saves them in /attachments/{sheet_id}/{row_id}/"""
     try:
-        # ✅ Create base folder for the sheet's attachments
+        SMARTSHEET_API_KEY = config.CREDENTIALS["SMARTSHEET_API_KEY"]
+        # Create base folder for the sheet's attachments
         base_folder = os.path.abspath(f"attachments/{sheet_id}")
         os.makedirs(base_folder, exist_ok=True)
 
-        # ✅ Get all rows in the sheet
+        # Get all rows in the sheet
         sheet_data = smartsheet_client.Sheets.get_sheet(sheet_id)
 
         for row in sheet_data.rows:
+            # Check for cancellation before processing a new row
+            from process_state import cancel_requested  # If not already imported globally
+            if cancel_requested:
+                print("Cancellation requested before processing row; stopping attachments download.")
+                return
+
             row_id = row.id  # Unique Row ID in Smartsheet
             row_folder = os.path.join(base_folder, str(row_id))
             os.makedirs(row_folder, exist_ok=True)  # Create folder for row
 
-            # ✅ Get all attachments for this row
+            # Get all attachments for this row
             attachments = smartsheet_client.Attachments.list_row_attachments(sheet_id, row_id).data
 
             for attachment in attachments:
+                # Check for cancellation before processing each attachment
+                if cancel_requested:
+                    print(f"Cancellation requested; stopping download for row {row_id}.")
+                    return
+
                 att_id = attachment.id
-                file_name = sanitize_filename(attachment.name)  # ✅ Clean the filename
+                file_name = sanitize_filename(attachment.name)  # Clean the filename
                 file_path = os.path.join(row_folder, file_name)
 
-                # ✅ Fetch attachment details
+                # Fetch attachment details
                 retrieve_att = smartsheet_client.Attachments.get_attachment(sheet_id, att_id)
                 file_url = retrieve_att.url  # Check if it's downloadable
 
                 if file_url:
-                    # ✅ Download and save attachment
+                    # Download and save attachment
                     response = requests.get(file_url, headers={"Authorization": f"Bearer {SMARTSHEET_API_KEY}"}, stream=True)
                     with open(file_path, "wb") as file:
                         for chunk in response.iter_content(chunk_size=8192):
+                            # Check for cancellation during file download
+                            if cancel_requested:
+                                print(f"Cancellation requested during download of {file_path}; stopping file download.")
+                                return
                             file.write(chunk)
-
                     print(f"✅ Downloaded: {file_path}")
                 else:
                     print(f"⚠️ Skipped (No download link): {file_name}")
 
         print(f"🎉 Completed downloading all attachments for sheet {sheet_id}")
-    
+
     except Exception as e:
         print(f"❌ Error downloading attachments for sheet {sheet_id}: {e}")
 
 def upload_comments_to_drive(sheet_id):
     """Uploads the comments Excel file to Google Drive inside comments/{sheet_id}/."""
     try:
+        GOOGLE_DRIVE__COMMENTS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE__COMMENTS_FOLDER_ID"]
         # ✅ Define the comments folder path
         comments_folder = os.path.abspath(f"comments/{sheet_id}")
         os.makedirs(comments_folder, exist_ok=True)  # Ensure directory exists
@@ -434,6 +472,7 @@ def upload_comments_to_drive(sheet_id):
 def upload_attachments_to_drive(sheet_id):
     """Uploads all attachments in attachments/{sheet_id}/{row_id}/ to Google Drive."""
     try:
+        GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID = config.CREDENTIALS["GOOGLE_DRIVE_ATTACHMENTS_FOLDER_ID"]
         # ✅ Define the base attachments directory
         attachments_folder = os.path.abspath(f"attachments/{sheet_id}")
         if not os.path.exists(attachments_folder):
@@ -484,6 +523,9 @@ def upload_attachments_to_drive(sheet_id):
 def send_data_to_appsheet_database(google_sheet_id, sheet_name):
     """Fetches data from Google Sheets and sends it to AppSheet Database."""
     try:
+        APPSHEET_API_KEY = config.CREDENTIALS["APPSHEET_API_KEY"]
+        APPSHEET_APP_ID = config.CREDENTIALS["APPSHEET_APP_ID"]
+        APPSHEET_TABLE_NAME = config.CREDENTIALS["APPSHEET_TABLE_NAME"]
         # ✅ Fetch Google Sheets Data (Ensuring it remains an Excel file)
         url = f"https://sheets.googleapis.com/v4/spreadsheets/{google_sheet_id}/values/{sheet_name}!A1:Z1000"
         headers = {"Authorization": f"Bearer {credentials.token}"}
